@@ -45,7 +45,7 @@ public static class Sfx
         src.playOnAwake = false;
         src.spatialBlend = 0f;
 
-        if (Object.FindFirstObjectByType<AudioListener>() == null)
+        if (Object.FindAnyObjectByType<AudioListener>() == null)
             go.AddComponent<AudioListener>();
 
         jump = Tone("jump", 0.14f, 380f, 760f, Wave.Square, 0.35f, 0.004f, 0.06f);
