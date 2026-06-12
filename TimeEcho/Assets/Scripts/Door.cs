@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-// Bolumdeki tum butonlar basiliyken acilir. Kapanirken icinde kalan
+// Esleştigi harfin TUM butonlari basiliyken acilir. Kapanirken icinde kalan
 // oyuncuyu ezer — bu da dogal bir tur sonudur.
 public class Door : MonoBehaviour
 {
@@ -12,7 +12,9 @@ public class Door : MonoBehaviour
     bool open;
     Vector2 size;
 
-    static readonly Color Closed = new Color(0.86f, 0.30f, 0.36f);
+    static readonly Color ClosedTintArt = Color.white;
+    static readonly Color ClosedTintFallback = new Color(0.86f, 0.30f, 0.36f);
+    Color closedTint;
 
     public static Door Spawn(Vector2 center, int tilesTall, Transform parent)
     {
@@ -24,7 +26,29 @@ public class Door : MonoBehaviour
         d.size = new Vector2(0.96f, tilesTall);
         d.col = go.AddComponent<BoxCollider2D>();
         d.col.size = d.size;
-        d.sr = SpriteFactory.NewQuad("Visual", go.transform, center, d.size, Closed, 5);
+
+        var vgo = new GameObject("Visual");
+        vgo.transform.SetParent(go.transform, false);
+        d.sr = vgo.AddComponent<SpriteRenderer>();
+        d.sr.sharedMaterial = SpriteFactory.SpriteMat;
+        d.sr.sortingOrder = 5;
+
+        var art = GameSprites.DoorLock;
+        if (art != null)
+        {
+            // Kilitli altin bloklardan dikey sutun (tiled)
+            d.sr.sprite = art;
+            d.sr.drawMode = SpriteDrawMode.Tiled;
+            d.sr.size = new Vector2(1f, tilesTall);
+            d.closedTint = ClosedTintArt;
+        }
+        else
+        {
+            d.sr.sprite = SpriteFactory.Square;
+            vgo.transform.localScale = new Vector3(0.96f, tilesTall, 1f);
+            d.closedTint = ClosedTintFallback;
+        }
+        d.sr.color = d.closedTint;
         return d;
     }
 
@@ -56,8 +80,8 @@ public class Door : MonoBehaviour
 
     void Update()
     {
-        var c = Closed;
-        c.a = open ? 0.12f : 1f;
+        var c = closedTint;
+        c.a = open ? 0.15f : 1f;
         sr.color = Color.Lerp(sr.color, c, Time.deltaTime * 14f);
     }
 }

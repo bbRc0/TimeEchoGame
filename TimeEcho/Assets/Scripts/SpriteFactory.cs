@@ -4,6 +4,7 @@ using UnityEngine;
 public static class SpriteFactory
 {
     static Sprite square;
+    static Sprite glow;
     static Material spriteMat;
 
     public static Sprite Square
@@ -21,6 +22,36 @@ public static class SpriteFactory
                 square = Sprite.Create(tex, new Rect(0, 0, 4, 4), new Vector2(0.5f, 0.5f), 4f);
             }
             return square;
+        }
+    }
+
+    // Kenarlara dogru yumusakca kaybolan dairesel isik (parilti efektleri icin).
+    public static Sprite Glow
+    {
+        get
+        {
+            if (glow == null)
+            {
+                const int N = 64;
+                var tex = new Texture2D(N, N, TextureFormat.RGBA32, false);
+                var px = new Color32[N * N];
+                float half = (N - 1) * 0.5f;
+                for (int y = 0; y < N; y++)
+                {
+                    for (int x = 0; x < N; x++)
+                    {
+                        float d = Mathf.Sqrt((x - half) * (x - half) + (y - half) * (y - half)) / half;
+                        float a = Mathf.Clamp01(1f - d);
+                        a = a * a;   // yumusak dusus
+                        px[y * N + x] = new Color32(255, 255, 255, (byte)(a * 255f));
+                    }
+                }
+                tex.SetPixels32(px);
+                tex.Apply();
+                tex.filterMode = FilterMode.Bilinear;
+                glow = Sprite.Create(tex, new Rect(0, 0, N, N), new Vector2(0.5f, 0.5f), N);
+            }
+            return glow;
         }
     }
 

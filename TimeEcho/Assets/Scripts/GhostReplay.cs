@@ -5,11 +5,18 @@ using UnityEngine;
 // (tek yonlu platform), ama oyuncuyu yandan itmez.
 public class GhostReplay : MonoBehaviour
 {
+    // Hayalet, OYUNCUNUN kendi sprite'ini soluk mavi-beyaz tonda kullanir:
+    // ayni siluet = "gecmisteki sen" aninda okunur, yanlis anlasilmaz.
+    static readonly Color GhostTint = new Color(0.72f, 0.85f, 1f, 0.55f);
+
     List<Vector2> frames;
     Rigidbody2D rb;
-    Transform eyes;
+    SpriteRenderer bodySr;
+    bool artMode;
     bool vanished;
     int facing = 1;
+    float animTimer;
+    bool walkFrame;
 
     public static GhostReplay Spawn(List<Vector2> recording, Transform parent)
     {
@@ -21,6 +28,8 @@ public class GhostReplay : MonoBehaviour
         var rb = go.AddComponent<Rigidbody2D>();
         rb.bodyType = RigidbodyType2D.Kinematic;
         rb.interpolation = RigidbodyInterpolation2D.Interpolate;
+        rb.freezeRotation = true;                    // hicbir kosulda donmesin
+        go.transform.rotation = Quaternion.identity;
 
         var col = go.AddComponent<BoxCollider2D>();
         col.size = new Vector2(0.8f, 0.95f);
@@ -30,16 +39,28 @@ public class GhostReplay : MonoBehaviour
         eff.useOneWay = true;
         eff.surfaceArc = 170f;
 
-        var body = new Color(0.42f, 0.88f, 1f, 0.42f);
-        SpriteFactory.NewQuad("Body", go.transform, start, new Vector2(0.8f, 0.95f), body, 8);
-
         var g = go.AddComponent<GhostReplay>();
         g.frames = recording;
-        g.eyes = new GameObject("Eyes").transform;
-        g.eyes.SetParent(go.transform, false);
-        var eyeC = new Color(1f, 1f, 1f, 0.55f);
-        SpriteFactory.NewQuad("EyeL", g.eyes, start, new Vector2(0.12f, 0.16f), eyeC, 9).transform.localPosition = new Vector3(-0.14f, 0.36f, 0f);
-        SpriteFactory.NewQuad("EyeR", g.eyes, start, new Vector2(0.12f, 0.16f), eyeC, 9).transform.localPosition = new Vector3(0.14f, 0.36f, 0f);
+
+        var body = new GameObject("Body");
+        body.transform.SetParent(go.transform, false);
+        g.bodySr = body.AddComponent<SpriteRenderer>();
+        g.bodySr.sharedMaterial = SpriteFactory.SpriteMat;
+        g.bodySr.sortingOrder = 8;
+
+        var art = GameSprites.PlayerIdle;
+        if (art != null)
+        {
+            g.artMode = true;
+            g.bodySr.sprite = art;       // oyuncuyla ayni astronot
+            g.bodySr.color = GhostTint;  // soluk, yari saydam "yanki" gorunumu
+        }
+        else
+        {
+            g.bodySr.sprite = SpriteFactory.Square;
+            g.bodySr.color = new Color(0.42f, 0.88f, 1f, 0.42f);
+            body.transform.localScale = new Vector3(0.8f, 0.95f, 1f);
+        }
         return g;
     }
 
@@ -55,12 +76,25 @@ public class GhostReplay : MonoBehaviour
         int f = LoopManager.I.Frame;
         if (f < frames.Count)
         {
+            bool moving = false;
             if (f > 0)
             {
                 float dx = frames[f].x - frames[f - 1].x;
                 if (dx > 0.001f) facing = 1;
                 else if (dx < -0.001f) facing = -1;
-                eyes.localPosition = new Vector3(0.10f * facing, 0f, 0f);
+                moving = Mathf.Abs(dx) > 0.02f;
+            }
+            if (artMode)
+            {
+                // Art sola bakar; saga giderken aynala (oyuncuyla ayni kural).
+                bodySr.flipX = facing > 0;
+                if (moving)
+                {
+                    animTimer -= Time.fixedDeltaTime;
+                    if (animTimer <= 0f) { walkFrame = !walkFrame; animTimer = 0.12f; }
+                }
+                else walkFrame = false;
+                bodySr.sprite = walkFrame ? GameSprites.PlayerWalk : GameSprites.PlayerIdle;
             }
             rb.MovePosition(frames[f]);
         }

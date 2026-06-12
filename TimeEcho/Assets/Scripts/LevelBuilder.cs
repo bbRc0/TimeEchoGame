@@ -13,22 +13,54 @@ public class LevelRefs
 public static class LevelBuilder
 {
     static readonly Color Ground = new Color(0.28f, 0.31f, 0.45f);
-    static readonly Color Backdrop = new Color(0.10f, 0.11f, 0.17f);
+    static readonly Color BackdropCol = new Color(0.10f, 0.11f, 0.17f);
 
-    public static LevelRefs Build(string[] map, Transform root)
+    public static LevelRefs Build(string[] map, int levelIndex, Transform root)
     {
         var refs = new LevelRefs();
         int rows = map.Length;
         int cols = map[0].Length;
         refs.Width = cols;
         refs.Height = rows;
+        bool art = GameSprites.Ok;
+        var rng = new System.Random(levelIndex * 977 + 41);
 
         Vector2 Center(int c, int r) => new Vector2(c + 0.5f, (rows - 1 - r) + 0.5f);
 
-        SpriteFactory.NewQuad("Backdrop", root, new Vector2(cols * 0.5f, rows * 0.5f),
-            new Vector2(cols, rows), Backdrop, -10);
+        SpriteFactory.NewQuad("BackdropFill", root, new Vector2(cols * 0.5f, rows * 0.5f),
+            new Vector2(cols, rows), BackdropCol, -20);
+        Backdrop.Spawn(levelIndex, cols, rows, root);
 
-        // Duvarlar: satir basina bitisik '#' kosulari tek nesnede birlestir.
+        // --- Duvar gorselleri: karo karo (ustu acik olanlar cimenli) ---
+        for (int r = 0; r < rows; r++)
+        {
+            for (int c = 0; c < cols; c++)
+            {
+                if (map[r][c] != '#') continue;
+                var pos = Center(c, r);
+                var go = new GameObject("Wall");
+                go.transform.SetParent(root, false);
+                go.transform.position = pos;
+                var sr = go.AddComponent<SpriteRenderer>();
+                sr.sharedMaterial = SpriteFactory.SpriteMat;
+                sr.sortingOrder = 0;
+                if (art)
+                {
+                    bool exposed = r > 0 && map[r - 1][c] != '#';
+                    if (exposed)
+                        sr.sprite = (c % 2 == 0) ? GameSprites.WallTop : GameSprites.WallTop2;
+                    else
+                        sr.sprite = ((c + r) % 2 == 0) ? GameSprites.WallFill : GameSprites.WallFill2;
+                }
+                else
+                {
+                    sr.sprite = SpriteFactory.Square;
+                    sr.color = Ground;
+                }
+            }
+        }
+
+        // --- Carpismalar: satir basina bitisik '#' kosulari tek collider ---
         for (int r = 0; r < rows; r++)
         {
             int c = 0;
@@ -38,43 +70,112 @@ public static class LevelBuilder
                 int start = c;
                 while (c < cols && map[r][c] == '#') c++;
                 int len = c - start;
-                var pos = new Vector2(start + len * 0.5f, (rows - 1 - r) + 0.5f);
-                var sr = SpriteFactory.NewQuad("Wall", root, pos, new Vector2(len, 1f), Ground, 0);
-                sr.gameObject.AddComponent<BoxCollider2D>(); // 1x1, olcekle buyur
+                var go = new GameObject("WallCol");
+                go.transform.SetParent(root, false);
+                go.transform.position = new Vector2(start + len * 0.5f, (rows - 1 - r) + 0.5f);
+                var col = go.AddComponent<BoxCollider2D>();
+                col.size = new Vector2(len, 1f);
             }
         }
 
-        // Kapilar: sutun basina bitisik 'D' kosulari tek kapi olur.
+        // --- Kapilar: sutun basina bitisik ayni harf kosulari tek kapi ---
+        var doorLetters = new Dictionary<Door, char>();
         for (int c = 0; c < cols; c++)
         {
             int r = 0;
             while (r < rows)
             {
-                if (map[r][c] != 'D') { r++; continue; }
+                char ch = map[r][c];
+                if (ch < 'A' || ch > 'C') { r++; continue; }
                 int start = r;
-                while (r < rows && map[r][c] == 'D') r++;
+                while (r < rows && map[r][c] == ch) r++;
                 int len = r - start;
                 float midRow = start + (len - 1) * 0.5f;
                 var pos = new Vector2(c + 0.5f, (rows - 1 - midRow) + 0.5f);
-                refs.Doors.Add(Door.Spawn(pos, len, root));
+                var door = Door.Spawn(pos, len, root);
+                doorLetters[door] = char.ToLower(ch);
+                refs.Doors.Add(door);
             }
         }
 
+        // --- Lazerler: sutun basina bitisik 'L' kosulari tek isin ---
+        int laserIdx = 0;
+        for (int c = 0; c < cols; c++)
+        {
+            int r = 0;
+            while (r < rows)
+            {
+                if (map[r][c] != 'L') { r++; continue; }
+                int start = r;
+                while (r < rows && map[r][c] == 'L') r++;
+                int len = r - start;
+                float midRow = start + (len - 1) * 0.5f;
+                var pos = new Vector2(c + 0.5f, (rows - 1 - midRow) + 0.5f);
+                // Lazerler sirayla zit fazda calisir (8. bolum ritim bulmacasi)
+                float phase = (laserIdx % 2 == 0) ? 0f : LaserBeam.OnTime;
+                LaserBeam.Spawn(pos, len, phase, root);
+                laserIdx++;
+            }
+        }
+
+        // --- Tekil hucreler ---
+        var platesByLetter = new Dictionary<char, List<PressurePlate>>();
         for (int r = 0; r < rows; r++)
         {
             for (int c = 0; c < cols; c++)
             {
-                switch (map[r][c])
+                char ch = map[r][c];
+                switch (ch)
                 {
-                    case 'P': refs.Spawn = Center(c, r); break;
-                    case 'o': refs.Plates.Add(PressurePlate.Spawn(Center(c, r), root)); break;
-                    case 'E': ExitZone.Spawn(Center(c, r), root); break;
+                    case 'P':
+                        refs.Spawn = Center(c, r);
+                        break;
+                    case 'E':
+                        ExitZone.Spawn(Center(c, r), root);
+                        break;
+                    case '^':
+                        Spike.Spawn(Center(c, r), root);
+                        break;
+                    default:
+                        if (ch >= 'a' && ch <= 'c')
+                        {
+                            var plate = PressurePlate.Spawn(Center(c, r), root);
+                            refs.Plates.Add(plate);
+                            if (!platesByLetter.TryGetValue(ch, out var list))
+                                platesByLetter[ch] = list = new List<PressurePlate>();
+                            list.Add(plate);
+                        }
+                        break;
                 }
             }
         }
 
-        foreach (var d in refs.Doors)
-            d.Plates = refs.Plates;
+        // Kapi -> ayni harfli butonlar
+        foreach (var kv in doorLetters)
+        {
+            if (platesByLetter.TryGetValue(kv.Value, out var list))
+                kv.Key.Plates = list;
+        }
+
+        // --- Susleme: zemin ustundeki bos hucrelere cim/agac/kaktus serpistir ---
+        if (art)
+        {
+            for (int r = 1; r < rows - 1; r++)
+            {
+                for (int c = 1; c < cols - 1; c++)
+                {
+                    if (map[r][c] != ' ' || map[r + 1][c] != '#') continue;
+                    if (rng.NextDouble() > 0.20) continue;
+                    var go = new GameObject("Decor");
+                    go.transform.SetParent(root, false);
+                    go.transform.position = Center(c, r);
+                    var sr = go.AddComponent<SpriteRenderer>();
+                    sr.sprite = GameSprites.Decor(rng.Next(5));
+                    sr.sharedMaterial = SpriteFactory.SpriteMat;
+                    sr.sortingOrder = 1;
+                }
+            }
+        }
 
         refs.Wave = TimeWave.Spawn(cols, rows, root);
         return refs;

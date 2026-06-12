@@ -13,7 +13,8 @@ public class PlayerController : MonoBehaviour
     public readonly List<Vector2> Recording = new List<Vector2>();
 
     Rigidbody2D rb;
-    Transform eyes;
+    SpriteRenderer bodySr;
+    bool artMode;
     float inputX;
     float jumpBufferLeft;
     float coyoteLeft;
@@ -21,6 +22,9 @@ public class PlayerController : MonoBehaviour
     bool wasGrounded;
     float stepTimer;
     float prevPosX;
+    float animTimer;
+    bool walkFrame;
+    bool walking;
 
     // Duvara tutunmayi onler: sifir surtunme => duvara yaslanip yavas dusme yok.
     static PhysicsMaterial2D slick;
@@ -50,16 +54,26 @@ public class PlayerController : MonoBehaviour
         col.size = new Vector2(0.8f, 0.95f);
         col.sharedMaterial = Slick;
 
-        var body = new Color(1f, 0.71f, 0.28f);
-        SpriteFactory.NewQuad("Body", go.transform, pos, new Vector2(0.8f, 0.95f), body, 10);
-
         var pc = go.AddComponent<PlayerController>();
-        pc.eyes = new GameObject("Eyes").transform;
-        pc.eyes.SetParent(go.transform, false);
-        pc.eyes.localPosition = new Vector3(0.10f, 0.18f, 0f);
-        var eyeC = new Color(0.18f, 0.12f, 0.05f);
-        SpriteFactory.NewQuad("EyeL", pc.eyes, pos, new Vector2(0.12f, 0.16f), eyeC, 11).transform.localPosition = new Vector3(-0.14f, 0.18f, 0f);
-        SpriteFactory.NewQuad("EyeR", pc.eyes, pos, new Vector2(0.12f, 0.16f), eyeC, 11).transform.localPosition = new Vector3(0.14f, 0.18f, 0f);
+
+        var body = new GameObject("Body");
+        body.transform.SetParent(go.transform, false);
+        pc.bodySr = body.AddComponent<SpriteRenderer>();
+        pc.bodySr.sharedMaterial = SpriteFactory.SpriteMat;
+        pc.bodySr.sortingOrder = 10;
+
+        var art = GameSprites.PlayerIdle;
+        if (art != null)
+        {
+            pc.artMode = true;
+            pc.bodySr.sprite = art;     // turuncu astronot, 24px = 1 birim
+        }
+        else
+        {
+            pc.bodySr.sprite = SpriteFactory.Square;
+            pc.bodySr.color = new Color(1f, 0.71f, 0.28f);
+            body.transform.localScale = new Vector3(0.8f, 0.95f, 1f);
+        }
         return pc;
     }
 
@@ -80,6 +94,8 @@ public class PlayerController : MonoBehaviour
         prevPosX = pos.x;
         wasGrounded = false;
         stepTimer = 0f;
+        facing = 1;
+        if (bodySr != null) bodySr.flipX = true;   // sag yon = aynali (art sola bakar)
     }
 
     void Update()
@@ -97,7 +113,24 @@ public class PlayerController : MonoBehaviour
 
         if (inputX > 0.01f) facing = 1;
         else if (inputX < -0.01f) facing = -1;
-        eyes.localPosition = new Vector3(0.10f * facing, 0.18f, 0f);
+
+        // Animasyon: yururken iki kare arasinda gecis yap
+        if (artMode)
+        {
+            // Kenney astronot karesi dogal olarak SOLA bakar; saga giderken aynala.
+            bodySr.flipX = facing > 0;
+            if (walking)
+            {
+                animTimer -= Time.deltaTime;
+                if (animTimer <= 0f)
+                {
+                    walkFrame = !walkFrame;
+                    animTimer = 0.12f;
+                }
+            }
+            else walkFrame = false;
+            bodySr.sprite = walkFrame ? GameSprites.PlayerWalk : GameSprites.PlayerIdle;
+        }
     }
 
     void FixedUpdate()
@@ -131,8 +164,8 @@ public class PlayerController : MonoBehaviour
         // Boylece duvara/engele dayanip yerinde sayarken adim sesi gelmez.
         float actualDx = Mathf.Abs(rb.position.x - prevPosX);
         prevPosX = rb.position.x;
-        bool reallyWalking = grounded && Mathf.Abs(inputX) > 0.01f && actualDx > 0.03f;
-        if (reallyWalking)
+        walking = grounded && Mathf.Abs(inputX) > 0.01f && actualDx > 0.03f;
+        if (walking)
         {
             stepTimer -= Time.fixedDeltaTime;
             if (stepTimer <= 0f) { Sfx.Step(); stepTimer = 0.27f; }

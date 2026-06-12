@@ -31,7 +31,9 @@ public class LoopManager : MonoBehaviour
 
     public bool IsPaused { get; private set; }
     float confettiTimer;
-    bool menuSettingsOpen;
+
+    enum MenuScreen { Root, Settings, Levels }
+    MenuScreen menuScreen = MenuScreen.Root;
 
     void Awake()
     {
@@ -61,7 +63,7 @@ public class LoopManager : MonoBehaviour
     void LoadLevel(int index)
     {
         SetPaused(false);
-        menuSettingsOpen = false;
+        menuScreen = MenuScreen.Root;
         levelIndex = index;
         recordings.Clear();
         loopNumber = 1;
@@ -73,11 +75,32 @@ public class LoopManager : MonoBehaviour
         ghosts.Clear();
 
         levelRoot = new GameObject("Level_" + (index + 1));
-        refs = LevelBuilder.Build(LevelMaps.Maps[index], levelRoot.transform);
+        refs = LevelBuilder.Build(LevelMaps.Maps[index], index, levelRoot.transform);
         Player = PlayerController.Spawn(refs.Spawn, null);
 
         FrameCamera(refs.Width, refs.Height);
         StartLoop();
+    }
+
+    // Ana menuye don: bolumu tamamen kaldir.
+    void ExitToMenu()
+    {
+        SetPaused(false);
+        if (levelRoot != null) Destroy(levelRoot);
+        if (Player != null) Destroy(Player.gameObject);
+        Player = null;
+        refs = null;
+        ghosts.Clear();
+        recordings.Clear();
+        menuScreen = MenuScreen.Root;
+        CurrentPhase = Phase.MainMenu;
+    }
+
+    // Bolum kilidi: tamamlanan en yuksek bolumun bir sonrasi acik.
+    int Unlocked
+    {
+        get { return Mathf.Clamp(PlayerPrefs.GetInt("te_unlocked", 0), 0, LevelMaps.Maps.Length - 1); }
+        set { PlayerPrefs.SetInt("te_unlocked", Mathf.Max(PlayerPrefs.GetInt("te_unlocked", 0), value)); }
     }
 
     void FrameCamera(float w, float h)
@@ -206,6 +229,7 @@ public class LoopManager : MonoBehaviour
         Fx.Burst(Player.transform.position, new Color(0.35f, 0.95f, 0.55f), 20);
         Sfx.LevelClear();
         Player.gameObject.SetActive(false);
+        Unlocked = levelIndex + 1;   // sonraki bolumun kilidini ac (kalici)
         CurrentPhase = Phase.LevelComplete;
         phaseTimer = 2.2f;
     }
@@ -285,11 +309,32 @@ public class LoopManager : MonoBehaviour
             return;
         }
 
-        // Sol ust: durum (hayalet kullanilan/hak)
+        // Sol ust: durum + kalan hayalet hakki (kalpler).
+        // Kalpler sabit konum yerine metnin OLCULMUS genisliginden sonra cizilir
+        // ki hicbir cozunurlukte yazinin ustune binmesin.
         int budget = LevelMaps.GhostBudgets[levelIndex];
-        Shadowed(new Rect(16 * s, 10 * s, 700 * s, 40 * s),
-            $"Bölüm {levelIndex + 1}/{LevelMaps.Maps.Length}    Tur {loopNumber}    Hayalet: {recordings.Count}/{budget}",
-            MakeStyle(mid, Color.white, TextAnchor.UpperLeft));
+        string status = $"Bölüm {levelIndex + 1}/{LevelMaps.Maps.Length}   Tur {loopNumber}   Hayalet hakkı:";
+        var statusStyle = MakeStyle(mid, Color.white, TextAnchor.UpperLeft);
+        Shadowed(new Rect(16 * s, 10 * s, Screen.width * 0.7f, 40 * s), status, statusStyle);
+        float statusW = statusStyle.CalcSize(new GUIContent(status)).x;
+        float hx = 16 * s + statusW + 12 * s;
+        if (GameSprites.Ok)
+        {
+            // Dolu kalp = kalan hak, bos kalp = kullanilmis
+            float hs = 30 * s;
+            for (int i = 0; i < budget; i++)
+            {
+                bool remaining = i < (budget - recordings.Count);
+                GameSprites.DrawTileGUI(new Rect(hx + i * (hs + 4 * s), 8 * s, hs, hs),
+                    remaining ? 4 : 6, 2);   // (4,2)=dolu kalp, (6,2)=bos kalp
+            }
+        }
+        else
+        {
+            Shadowed(new Rect(hx, 10 * s, 200 * s, 40 * s),
+                $"{budget - recordings.Count}/{budget}",
+                MakeStyle(mid, new Color(0.42f, 0.88f, 1f), TextAnchor.UpperLeft));
+        }
 
         // Sag ust: dalga sayaci
         if (IsPlaying && refs != null && refs.Wave != null)
@@ -301,11 +346,29 @@ public class LoopManager : MonoBehaviour
                 MakeStyle(mid, col, TextAnchor.UpperRight));
         }
 
-        // Ilk turda bolum ipucu
+        // Ilk turda bolum ipucu: olculmus yukseklikte, yari saydam kutu icinde.
+        // Kutu, ust duvar sirasinin EKRANDAKI konumunun hemen altina yerlesir
+        // ki karolarin ustune binmesin.
         if (IsPlaying && loopNumber == 1 && LoopTime < 7f)
         {
-            Shadowed(new Rect(0, 70 * s, Screen.width, 120 * s), LevelMaps.Hints[levelIndex],
-                MakeStyle(small, new Color(1f, 1f, 1f, 0.85f), TextAnchor.UpperCenter, FontStyle.Normal));
+            var hintStyle = MakeStyle(small, new Color(1f, 1f, 1f, 0.9f), TextAnchor.UpperCenter, FontStyle.Normal);
+            var content = new GUIContent(LevelMaps.Hints[levelIndex]);
+            float boxW = Mathf.Min(Screen.width - 40 * s, 760 * s);
+            float textH = hintStyle.CalcHeight(content, boxW - 24 * s);
+
+            float topY = 70 * s;
+            var cam = Camera.main;
+            if (cam != null && refs != null)
+            {
+                // Ust duvarin alt kenari (dunya y = yukseklik - 1) ekranda nerede?
+                var sp = cam.WorldToScreenPoint(new Vector3(0f, refs.Height - 1f, 0f));
+                topY = (Screen.height - sp.y) + 10 * s;
+            }
+
+            var box = new Rect((Screen.width - boxW) * 0.5f, topY, boxW, textH + 18 * s);
+            Fill(box, new Color(0f, 0f, 0.05f, 0.5f));
+            Shadowed(new Rect(box.x + 12 * s, box.y + 9 * s, box.width - 24 * s, textH),
+                LevelMaps.Hints[levelIndex], hintStyle);
         }
 
         // Orta mesajlar
@@ -348,7 +411,7 @@ public class LoopManager : MonoBehaviour
         // Hafif karartma: arkadaki konfeti gorunsun.
         Fill(new Rect(0, 0, Screen.width, Screen.height), new Color(0.03f, 0.04f, 0.09f, 0.40f));
 
-        float pw = 560 * s, ph = 360 * s;
+        float pw = 560 * s, ph = 420 * s;
         var panel = new Rect((Screen.width - pw) * 0.5f, (Screen.height - ph) * 0.5f, pw, ph);
         Fill(panel, new Color(0.11f, 0.13f, 0.22f, 0.98f));
         Fill(new Rect(panel.x, panel.y, panel.width, 6 * s), new Color(0.35f, 0.95f, 0.55f, 1f));
@@ -360,19 +423,21 @@ public class LoopManager : MonoBehaviour
         Shadowed(new Rect(panel.x, panel.y + 40 * s, panel.width, 70 * s), "KAZANDIN!",
             MakeStyle(Mathf.RoundToInt(56 * s), gold, TextAnchor.MiddleCenter));
         Shadowed(new Rect(panel.x, panel.y + 120 * s, panel.width, 40 * s),
-            "Zamanın yankılarıyla üç bölümü de aştın.",
+            $"Zamanın yankılarıyla {LevelMaps.Maps.Length} bölümün hepsini aştın.",
             MakeStyle(Mathf.RoundToInt(20 * s), Color.white, TextAnchor.MiddleCenter, FontStyle.Normal));
         Shadowed(new Rect(panel.x, panel.y + 156 * s, panel.width, 36 * s),
             "Geçmişteki sen, şimdiki sana yardım etti.",
             MakeStyle(Mathf.RoundToInt(16 * s), new Color(0.42f, 0.88f, 1f), TextAnchor.MiddleCenter, FontStyle.Normal));
 
-        float bw = 220 * s, bh = 48 * s, gap = 16 * s;
+        float bw = 220 * s, bh = 44 * s, gap = 12 * s;
         float bx = panel.x + (panel.width - bw) * 0.5f;
-        float by = panel.y + ph - bh * 2 - gap - 28 * s;
+        float by = panel.y + ph - bh * 3 - gap * 2 - 22 * s;
 
         if (Btn(new Rect(bx, by, bw, bh), "Baştan Oyna", Mathf.RoundToInt(22 * s), new Color(0.2f, 0.6f, 0.35f)))
             LoadLevel(0);
-        if (Btn(new Rect(bx, by + bh + gap, bw, bh), "Çıkış", Mathf.RoundToInt(22 * s), new Color(0.45f, 0.2f, 0.28f)))
+        if (Btn(new Rect(bx, by + bh + gap, bw, bh), "Ana Menü", Mathf.RoundToInt(22 * s), new Color(0.3f, 0.35f, 0.5f)))
+            ExitToMenu();
+        if (Btn(new Rect(bx, by + (bh + gap) * 2, bw, bh), "Çıkış", Mathf.RoundToInt(22 * s), new Color(0.45f, 0.2f, 0.28f)))
             Quit();
     }
 
@@ -414,7 +479,7 @@ public class LoopManager : MonoBehaviour
     {
         Fill(new Rect(0, 0, Screen.width, Screen.height), new Color(0.03f, 0.04f, 0.09f, 0.75f));
 
-        float pw = 520 * s, ph = 470 * s;
+        float pw = 520 * s, ph = 540 * s;
         var panel = new Rect((Screen.width - pw) * 0.5f, (Screen.height - ph) * 0.5f, pw, ph);
         Fill(panel, new Color(0.11f, 0.13f, 0.22f, 0.98f));
         Fill(new Rect(panel.x, panel.y, panel.width, 6 * s), new Color(0.42f, 0.88f, 1f, 1f));
@@ -429,13 +494,15 @@ public class LoopManager : MonoBehaviour
         DrawSettingsControls(lx, lw, panel.y + 124 * s, s);
 
         // Butonlar
-        float bw = panel.width - 80 * s, bh = 46 * s, gap = 12 * s;
-        float by = panel.y + ph - bh * 3 - gap * 2 - 20 * s;
+        float bw = panel.width - 80 * s, bh = 44 * s, gap = 11 * s;
+        float by = panel.y + ph - bh * 4 - gap * 3 - 18 * s;
         if (Btn(new Rect(lx, by, bw, bh), "Devam Et", Mathf.RoundToInt(22 * s), new Color(0.2f, 0.5f, 0.6f)))
             SetPaused(false);
         if (Btn(new Rect(lx, by + bh + gap, bw, bh), "Bölümü Yeniden Başlat", Mathf.RoundToInt(20 * s), new Color(0.45f, 0.4f, 0.2f)))
             LoadLevel(levelIndex);
-        if (Btn(new Rect(lx, by + (bh + gap) * 2, bw, bh), "Çıkış", Mathf.RoundToInt(22 * s), new Color(0.45f, 0.2f, 0.28f)))
+        if (Btn(new Rect(lx, by + (bh + gap) * 2, bw, bh), "Ana Menü", Mathf.RoundToInt(22 * s), new Color(0.3f, 0.35f, 0.5f)))
+            ExitToMenu();
+        if (Btn(new Rect(lx, by + (bh + gap) * 3, bw, bh), "Çıkış", Mathf.RoundToInt(22 * s), new Color(0.45f, 0.2f, 0.28f)))
             Quit();
     }
 
@@ -464,21 +531,28 @@ public class LoopManager : MonoBehaviour
             "Zaman Yankısı — geçmişteki sen, şimdiki sana yardım eder",
             MakeStyle(Mathf.RoundToInt(20 * s), new Color(0.42f, 0.88f, 1f), TextAnchor.MiddleCenter, FontStyle.Normal));
 
-        if (menuSettingsOpen)
+        if (menuScreen == MenuScreen.Settings)
         {
             DrawMenuSettings(s);
             return;
         }
+        if (menuScreen == MenuScreen.Levels)
+        {
+            DrawLevelSelect(s);
+            return;
+        }
 
         // Butonlar
-        float bw = 300 * s, bh = 56 * s, gap = 16 * s;
+        float bw = 300 * s, bh = 54 * s, gap = 14 * s;
         float bx = (Screen.width - bw) * 0.5f;
-        float by = Screen.height * 0.46f;
+        float by = Screen.height * 0.44f;
         if (Btn(new Rect(bx, by, bw, bh), "Başlat", Mathf.RoundToInt(26 * s), new Color(0.2f, 0.55f, 0.35f)))
-            LoadLevel(0);
-        if (Btn(new Rect(bx, by + bh + gap, bw, bh), "Ayarlar", Mathf.RoundToInt(26 * s), new Color(0.2f, 0.45f, 0.6f)))
-            menuSettingsOpen = true;
-        if (Btn(new Rect(bx, by + (bh + gap) * 2, bw, bh), "Çıkış", Mathf.RoundToInt(26 * s), new Color(0.45f, 0.2f, 0.28f)))
+            LoadLevel(Unlocked);   // kalinan yerden devam
+        if (Btn(new Rect(bx, by + (bh + gap), bw, bh), "Bölümler", Mathf.RoundToInt(26 * s), new Color(0.5f, 0.4f, 0.2f)))
+            menuScreen = MenuScreen.Levels;
+        if (Btn(new Rect(bx, by + (bh + gap) * 2, bw, bh), "Ayarlar", Mathf.RoundToInt(26 * s), new Color(0.2f, 0.45f, 0.6f)))
+            menuScreen = MenuScreen.Settings;
+        if (Btn(new Rect(bx, by + (bh + gap) * 3, bw, bh), "Çıkış", Mathf.RoundToInt(26 * s), new Color(0.45f, 0.2f, 0.28f)))
             Quit();
 
         Shadowed(new Rect(0, Screen.height - 40 * s, Screen.width, 30 * s),
@@ -488,8 +562,8 @@ public class LoopManager : MonoBehaviour
 
     void DrawMenuSettings(float s)
     {
-        float pw = 520 * s, ph = 360 * s;
-        var panel = new Rect((Screen.width - pw) * 0.5f, Screen.height * 0.42f, pw, ph);
+        float pw = 520 * s, ph = 440 * s;
+        var panel = new Rect((Screen.width - pw) * 0.5f, Screen.height * 0.38f, pw, ph);
         Fill(panel, new Color(0.11f, 0.13f, 0.22f, 0.98f));
         Fill(new Rect(panel.x, panel.y, panel.width, 6 * s), new Color(0.42f, 0.88f, 1f, 1f));
 
@@ -499,9 +573,76 @@ public class LoopManager : MonoBehaviour
         float lx = panel.x + 40 * s, lw = panel.width - 80 * s;
         DrawSettingsControls(lx, lw, panel.y + 80 * s, s);
 
-        float bw = panel.width - 80 * s, bh = 50 * s;
-        if (Btn(new Rect(lx, panel.y + ph - bh - 20 * s, bw, bh), "Geri", Mathf.RoundToInt(24 * s), new Color(0.3f, 0.35f, 0.45f)))
-            menuSettingsOpen = false;
+        float bw = panel.width - 80 * s, bh = 48 * s, gap = 12 * s;
+        float by = panel.y + ph - bh * 2 - gap - 18 * s;
+        if (Btn(new Rect(lx, by, bw, bh), "İlerlemeyi Sıfırla", Mathf.RoundToInt(20 * s), new Color(0.5f, 0.3f, 0.2f)))
+        {
+            PlayerPrefs.DeleteKey("te_unlocked");   // tum bolum kilitleri kapanir
+            PlayerPrefs.Save();
+        }
+        if (Btn(new Rect(lx, by + bh + gap, bw, bh), "Geri", Mathf.RoundToInt(24 * s), new Color(0.3f, 0.35f, 0.45f)))
+            menuScreen = MenuScreen.Root;
+    }
+
+    // ----- Bolum secme ekrani -----
+    void DrawLevelSelect(float s)
+    {
+        int count = LevelMaps.Maps.Length;
+        int unlocked = Unlocked;
+
+        float pw = 640 * s, ph = 380 * s;
+        var panel = new Rect((Screen.width - pw) * 0.5f, Screen.height * 0.40f, pw, ph);
+        Fill(panel, new Color(0.11f, 0.13f, 0.22f, 0.98f));
+        Fill(new Rect(panel.x, panel.y, panel.width, 6 * s), new Color(1f, 0.8f, 0.3f, 1f));
+
+        Shadowed(new Rect(panel.x, panel.y + 20 * s, panel.width, 36 * s), "BÖLÜMLER",
+            MakeStyle(Mathf.RoundToInt(26 * s), Color.white, TextAnchor.MiddleCenter));
+
+        // 5x2 izgara
+        int perRow = 5;
+        float cellW = 96 * s, cellH = 86 * s, cgap = 18 * s;
+        float gridW = perRow * cellW + (perRow - 1) * cgap;
+        float gx = panel.x + (panel.width - gridW) * 0.5f;
+        float gy = panel.y + 76 * s;
+
+        for (int i = 0; i < count; i++)
+        {
+            int rr = i / perRow, cc = i % perRow;
+            var rect = new Rect(gx + cc * (cellW + cgap), gy + rr * (cellH + cgap), cellW, cellH);
+            bool isOpen = i <= unlocked;
+            bool done = i < unlocked;
+
+            if (isOpen)
+            {
+                var accent = done ? new Color(0.2f, 0.5f, 0.3f) : new Color(0.25f, 0.45f, 0.65f);
+                bool hover = rect.Contains(Event.current.mousePosition);
+                Fill(rect, hover ? accent : new Color(accent.r, accent.g, accent.b, 0.6f));
+                Fill(new Rect(rect.x, rect.y, rect.width, 2f), new Color(1f, 1f, 1f, 0.25f));
+                GUI.Label(rect, (i + 1).ToString(),
+                    MakeStyle(Mathf.RoundToInt(30 * s), Color.white, TextAnchor.MiddleCenter));
+                if (done) // tamamlandi: altta yesil serit
+                    Fill(new Rect(rect.x + 8 * s, rect.y + rect.height - 8 * s, rect.width - 16 * s, 4 * s),
+                        new Color(0.5f, 1f, 0.6f, 0.9f));
+                if (GUI.Button(rect, GUIContent.none, GUIStyle.none))
+                {
+                    Sfx.Ui();
+                    LoadLevel(i);
+                    return;
+                }
+            }
+            else
+            {
+                // Kilitli: soluk numara
+                Fill(rect, new Color(0.15f, 0.16f, 0.22f, 0.9f));
+                GUI.Label(rect, (i + 1).ToString(),
+                    MakeStyle(Mathf.RoundToInt(30 * s), new Color(1f, 1f, 1f, 0.18f), TextAnchor.MiddleCenter));
+            }
+        }
+
+        float bw2 = 200 * s, bh2 = 46 * s;
+        if (Btn(new Rect(panel.x + (panel.width - bw2) * 0.5f, panel.y + ph - bh2 - 16 * s, bw2, bh2),
+            "Geri", Mathf.RoundToInt(22 * s), new Color(0.3f, 0.35f, 0.45f)))
+            menuScreen = MenuScreen.Root;
     }
 
     void Quit()
